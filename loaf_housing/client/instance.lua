@@ -201,6 +201,208 @@ RegisterNetEvent("loaf_housing:refresh_furniture", function(newFurniture)
     LoadFurniture()
 end)
 
+function Furnish(item)
+    CloseMenu()
+    if not cache.inInstance then return end
+
+    local _, _, furnitureData = FindFurniture(item)
+
+    local object = SpawnFurniture(item, GetEntityCoords(PlayerPedId()))
+    if object == nil then
+        Notify(Strings["couldnt_load"]:format(item))
+        return
+    end
+    FreezeEntityPosition(object, true)
+
+    local attachments = {}
+    for _, attachment in pairs(furnitureData.attached or {}) do
+        local attached = SpawnFurniture(attachment.object, GetEntityCoords(object))
+        if attached ~= nil then
+            FreezeEntityPosition(attached, true)
+            table.insert(attachments, attached)
+
+            AttachEntityToEntity(attached, object, 0, attachment.offset.xyz, vector3(0.0, 0.0, attachment.offset.w), false, false, false, false, 2, true)
+        else
+            Notify(Strings["couldnt_load"]:format(attachment.object))
+        end
+    end
+
+    Wait(500)
+
+    cache.busy = true
+    local speed, pressDelay = 1.0, 0
+    local placed, coords
+
+    while cache.busy do
+        local rotation = GetEntityRotation(object, 2)
+        DisplayHelp(Strings["furnishing"]:format(speed, math.floor(rotation.z + 0.5), math.floor(rotation.x + 0.5)))
+        SetEntityCollision(object, false, true)
+
+        DisableControlAction(0, 24, true) -- Attack
+        DisableControlAction(0, 257, true) -- Attack 2
+        DisableControlAction(0, 25, true) -- Aim
+        DisableControlAction(0, 263, true) -- Melee Attack 1
+        DisableControlAction(0, 45, true) -- Reload
+        DisableControlAction(0, 47, true)  -- Disable weapon
+        DisableControlAction(0, 264, true) -- Disable melee
+        DisableControlAction(0, 257, true) -- Disable melee
+        DisableControlAction(0, 140, true) -- Disable melee
+        DisableControlAction(0, 141, true) -- Disable melee
+        DisableControlAction(0, 142, true) -- Disable melee
+        DisableControlAction(0, 143, true) -- Disable melee
+        DisableControlAction(0, 14, true) -- Disable weapon wheel
+        DisableControlAction(0, 15, true) -- Disable weapon wheel
+        DisableControlAction(0, 16, true) -- Disable weapon wheel
+        DisableControlAction(0, 17, true)  -- Disable weapon wheel
+        DisableControlAction(0, 261, true) -- Disable weapon wheel
+        DisableControlAction(0, 262, true)  -- Disable weapon wheel
+        DisableControlAction(0, 44, true) -- Cover
+
+        DrawEntityBox(object)
+        for _, v in pairs(attachments) do
+            DrawEntityBox(v)
+        end
+
+        if pressDelay <= GetGameTimer() then
+            if IsDisabledControlPressed(0, 44) then -- q (decrease speed)
+                speed = speed - 0.1
+                if speed < 0.1 then speed = 0.1 end
+                pressDelay = GetGameTimer() + 100
+            elseif IsDisabledControlPressed(0, 46) then -- e (increase speed)
+                speed = speed + 0.1
+                pressDelay = GetGameTimer() + 100
+            end
+        end
+
+        if
+            IsDisabledControlPressed(0, 175) or
+            IsDisabledControlPressed(0, 174) or
+            IsDisabledControlPressed(0, 173) or
+            IsDisabledControlPressed(0, 172) or
+            IsDisabledControlPressed(0, 15) or
+            IsDisabledControlPressed(0, 14)
+        then
+            SetEntityRotation(object, 0.0, 0.0, rotation.z, 2, true)
+        end
+
+        -- move up / down
+        if IsDisabledControlPressed(0, 15) then -- scroll up
+            SetEntityCoordsNoOffset(object, GetEntityCoords(object) + vec3(0.0, 0.0, 0.01 * speed))
+        elseif IsDisabledControlPressed(0, 14) then -- scrol down
+            SetEntityCoordsNoOffset(object, GetEntityCoords(object) - vec3(0.0, 0.0, 0.01 * speed))
+        end
+
+        -- move forward/left/right/back
+        if IsDisabledControlPressed(0, 174) then -- arrow left
+            SetEntityCoordsNoOffset(object, GetOffsetFromEntityInWorldCoords(object, 0.01 * speed, 0.0, 0.0))
+        elseif IsDisabledControlPressed(0, 175) then -- arrow right
+            SetEntityCoordsNoOffset(object, GetOffsetFromEntityInWorldCoords(object, -0.01 * speed, 0.0, 0.0))
+        end
+        if IsDisabledControlPressed(0, 172) then -- arrow up
+            SetEntityCoordsNoOffset(object, GetOffsetFromEntityInWorldCoords(object, 0.0, -0.01 * speed, 0.0))
+        elseif IsDisabledControlPressed(0, 173) then -- arrow down
+            SetEntityCoordsNoOffset(object, GetOffsetFromEntityInWorldCoords(object, 0.0, 0.01 * speed, 0.0))
+        end
+
+        SetEntityRotation(object, rotation.x, 0.0, rotation.z, 2, true)
+
+        -- heading
+        if IsDisabledControlPressed(0, 24) then -- mouse left
+            if IsDisabledControlPressed(0, 21) then
+                if pressDelay <= GetGameTimer() then
+                    SetEntityRotation(object, rotation.x, 0.0, Round(rotation.z, 5, false)/1.0, 2, true)
+                    pressDelay = GetGameTimer() + 100
+                end
+            else
+                SetEntityRotation(object, rotation.x, 0.0, rotation.z - speed, 2, true)
+            end
+            rotation = GetEntityRotation(object, 2)
+        elseif IsDisabledControlPressed(0, 25) then -- mouse right
+            if IsDisabledControlPressed(0, 21) then
+                if pressDelay <= GetGameTimer() then
+                    SetEntityRotation(object, rotation.x, 0.0, Round(rotation.z, 5, true)/1.0, 2, true)
+                    pressDelay = GetGameTimer() + 100
+                end
+            else
+                SetEntityRotation(object, rotation.x, 0.0, rotation.z + speed, 2, true)
+            end
+            rotation = GetEntityRotation(object, 2)
+        end
+
+        -- tilt
+        if IsDisabledControlPressed(0, 246) then -- y
+            if IsDisabledControlPressed(0, 21) then
+                if pressDelay <= GetGameTimer() then
+                    SetEntityRotation(object, Round(rotation.x, 5, true)/1.0, 0.0, rotation.z, 2, true)
+                    pressDelay = GetGameTimer() + 100
+                end
+            else
+                SetEntityRotation(object, rotation.x + speed, 0.0, rotation.z, 2, true)
+            end
+        elseif IsDisabledControlPressed(0, 74) then -- h
+            if IsDisabledControlPressed(0, 21) then
+                if pressDelay <= GetGameTimer() then
+                    SetEntityRotation(object, Round(rotation.x, 5, false)/1.0, 0.0, rotation.z, 2, true)
+                    pressDelay = GetGameTimer() + 100
+                end
+            else
+                SetEntityRotation(object, rotation.x - speed, 0.0, rotation.z, 2, true)
+            end
+        end
+
+        if IsDisabledControlPressed(0, 47) then -- g (teleport to self)
+            SetEntityCoordsNoOffset(object, GetEntityCoords(PlayerPedId()))
+        end
+
+        if IsControlJustReleased(0, 191) then -- enter (place)
+            placed = true
+            if cache.shell then
+                coords = GetEntityCoords(object) - GetEntityCoords(cache.shell)
+            else
+                coords = GetEntityCoords(object)
+            end
+
+            cache.busy = false
+            break
+        end
+
+        if IsControlJustReleased(0, 194) then -- backspace (cancel)
+            cache.busy = false
+            break
+        end
+
+        Wait(0)
+    end
+
+    local heading = GetEntityHeading(object)
+    local tilt = GetEntityRotation(object, 2).x
+
+    ClearHelpText()
+    for _, v in pairs(attachments) do
+        DeleteEntity(v)
+    end
+    DeleteEntity(object)
+
+    if placed then
+        StartLoading(Strings["placing_furniture"])
+        lib.TriggerCallbackSync("loaf_housing:place_furniture", cache.currentInstance.instanceid, item, coords, heading, tilt)
+        StopLoading()
+    end
+end
+
+function ManagePlacedFurniture()
+    if not cache.inInstance then return end
+
+    cache.busy = true
+    while cache.busy do
+        Wait(0)
+
+        for i, v in pairs(cache.spawnedFurniture or {}) do
+            Draw3DTextSlow(i, v.coords.x, v.coords.y, v.coords.z)
+        end
+    end
+end
+
 function ExitInstance()
     DeleteFurniture()
 
