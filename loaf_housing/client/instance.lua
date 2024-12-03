@@ -55,13 +55,15 @@ function StorageMenuHandler(data)
 end
 
 function ClearAllTargetZones()
-    for _, targetId in ipairs(activeTargets) do
+    for i = #activeTargets, 1, -1 do
+        local targetId = activeTargets[i]
         if targetId then
             exports.ox_target:removeZone(targetId)
+            table.remove(activeTargets, i)
         end
     end
-    activeTargets = {}
 end
+
 function LoadFurniture()
     RemoveInteractableFurniture("REMOVE_ALL")
     DeleteFurniture()
@@ -155,6 +157,8 @@ function DeleteFurniture()
     end
     cache.spawnedFurniture = {}
 end
+
+
 local weatherSyncScripts = {
     "qb-weathersync",
     "cd_easytime"
@@ -394,13 +398,31 @@ function ManagePlacedFurniture()
     if not cache.inInstance then return end
 
     cache.busy = true
-    while cache.busy do
-        Wait(0)
+    local isManaging = true
 
+    -- Thread séparé pour gérer la sortie
+    CreateThread(function()
+        while isManaging do
+            if IsControlJustReleased(0, 194) then -- Escape
+                isManaging = false
+                cache.busy = false
+                break
+            end
+            Wait(0)
+        end
+    end)
+
+    while isManaging do
         for i, v in pairs(cache.spawnedFurniture or {}) do
             Draw3DTextSlow(i, v.coords.x, v.coords.y, v.coords.z)
         end
+        Wait(0)
     end
+
+    -- S'assurer que cache.busy est remis à false
+    SetTimeout(100, function()
+        cache.busy = false
+    end)
 end
 
 function ExitInstance()
@@ -413,17 +435,30 @@ function ExitInstance()
         end)
     end
 
-    TriggerServerEvent("loaf_housing:exit_property", cache.currentInstance.instanceid)
-    for _, targetId in pairs(activeTargets) do
-        exports.ox_target:removeZone(targetId)
+    -- Nettoyer toutes les zones, y compris la zone de sortie
+    ClearAllTargetZones()
+    if currentExitZone then
+        exports.ox_target:removeZone(currentExitZone)
+        currentExitZone = nil
     end
-    activeTargets = {}
+
+    TriggerServerEvent("loaf_housing:exit_property", cache.currentInstance.instanceid)
 
     cache.inInstance = false
     cache.shell = nil
     cache.spawnedFurniture = nil
     cache.currentInstance = nil
     cache.busy = false
+end
+
+function ClearAllTargetZones()
+    for i = #activeTargets, 1, -1 do
+        local targetId = activeTargets[i]
+        if targetId then
+            exports.ox_target:removeZone(targetId)
+        end
+    end
+    activeTargets = {}
 end
 
 function RefreshConceal()
@@ -459,16 +494,19 @@ AddStateBagChangeHandler("loaf_housing_instance", nil, function(bagName, key, va
 
     NetworkConcealPlayer(playerId, shouldConceal)
 end)
+-- Variable globale pour tracker la zone d'entrée
+local currentExitZone = nil
+
 RegisterNetEvent("loaf_housing:enter_instance", function(data)
     CloseMenu()
-
+    
     cache.inInstance = true
     cache.currentInstance = data
     cache.busy = true
-
+ 
     local doorHeading, doorPosition = -1.0
     local housedata = Houses[data.property]
-
+ 
     if data.shell then
         local shell = Shells[data.shell]
         if not shell then
@@ -481,11 +519,11 @@ RegisterNetEvent("loaf_housing:enter_instance", function(data)
             Notify(Strings["couldnt_load"]:format(data.shell))
             return
         end
-
+ 
         cache.shell = CreateObject(shell_model.model, data.coords.xyz, false, false, false)
         SetEntityHeading(cache.shell, 0.0)
         FreezeEntityPosition(cache.shell, true)
-
+ 
         doorPosition = GetOffsetFromEntityInWorldCoords(cache.shell, shell.doorOffset)
         if shell.doorHeading then
             doorHeading = shell.doorHeading
@@ -497,21 +535,31 @@ RegisterNetEvent("loaf_housing:enter_instance", function(data)
                 Wait(250)
             end
         end
-
+ 
         doorPosition = data.interior.coords
         if data.interior.heading then
             doorHeading = data.interior.heading
         end
     end
-
-    -- Ajout de l'interaction ox_target pour la porte
-    local exitTarget = exports.ox_target:addBoxZone({
-        coords = vector3(doorPosition.x, doorPosition.y - 0.5, doorPosition.z + 1.5), -- Position beaucoup plus haute
-        size = vector3(2.0, 2.0, 3.0), -- Zone très haute pour être sûr
+ 
+    -- Supprimer l'ancienne zone si elle existe
+    if currentExitZone then
+        exports.ox_target:removeZone(currentExitZone)
+        currentExitZone = nil
+    end
+ 
+    -- Nettoyage complet des zones
+    ClearAllTargetZones()
+ 
+    -- Création de la nouvelle zone d'interaction
+    currentExitZone = exports.ox_target:addBoxZone({
+        coords = vector3(doorPosition.x, doorPosition.y - 0.5, doorPosition.z + 1.5),
+        size = vector3(2.0, 2.0, 3.0),
         rotation = doorHeading,
+        debug = Config.Debug,
         options = {
             {
-                name = 'exit_interaction',
+                name = 'exit_interaction_' .. data.property .. '_' .. GetGameTimer(),
                 icon = 'fas fa-sign-out-alt',
                 label = housedata.type == "house" and Strings["manage_house"]:format(data.property) or Strings["manage_apart"]:format(data.property),
                 onSelect = InstanceInteraction,
@@ -519,57 +567,56 @@ RegisterNetEvent("loaf_housing:enter_instance", function(data)
             }
         }
     })
-    table.insert(activeTargets, doorTarget)
-
+ 
     TriggerEvent("qb-anticheat:client:ToggleDecorate", true)
     SetEntityVisible(PlayerPedId(), false, 0)
     SetEntityInvincible(PlayerPedId(), true)
-
+ 
     DoScreenFadeOut(750)
     while not IsScreenFadedOut() do Wait(0) end
-
+ 
     RefreshConceal()
     TriggerEvent("loaf_housing:weather_sync")
     TriggerEvent("loaf_housing:entered_property", data.property, Houses[data.property], data)
-
+ 
     Teleport(doorPosition)
     SetEntityHeading(PlayerPedId(), doorHeading)
-
+ 
     SetFocusPosAndVel(Config.FurnitureStore.Interior, 0.0, 0.0, 0.0)
     Wait(2500)
     ClearFocus()
-
+ 
     TriggerEvent("loaf_housing:refresh_furniture", cache.currentInstance.furniture)
-
+ 
     DoScreenFadeIn(500)
-
+ 
     TriggerEvent("qb-anticheat:client:ToggleDecorate", false)
     SetEntityVisible(PlayerPedId(), true, 0)
     SetTimeout(500, function()
         SetEntityInvincible(PlayerPedId(), false)
     end)
-
+ 
     while cache.inInstance do
         if #(GetEntityCoords(PlayerPedId()) - doorPosition) > 100.0 then
             SetEntityCoords(PlayerPedId(), doorPosition)
         end
         Wait(500)
     end
-
+ 
     TriggerEvent("qb-anticheat:client:ToggleDecorate", true)
     SetEntityVisible(PlayerPedId(), false, 0)
     SetEntityInvincible(PlayerPedId(), true)
-
+ 
     ExitInstance()
-
+ 
     CloseMenu()
-
+ 
     DoScreenFadeOut(750)
     while not IsScreenFadedOut() do Wait(0) end
-
+ 
     Teleport(housedata.entrance - vector4(0.0, 0.0, 1.0, 0.0))
     DoScreenFadeIn(500)
-
+ 
     TriggerEvent("qb-anticheat:client:ToggleDecorate", false)
     SetEntityVisible(PlayerPedId(), true, 0)
     SetTimeout(500, function()
