@@ -397,31 +397,49 @@ end
 function ManagePlacedFurniture()
     if not cache.inInstance then return end
 
-    cache.busy = true
     local isManaging = true
+    local startTime = GetGameTimer()
 
-    -- Thread séparé pour gérer la sortie
     CreateThread(function()
         while isManaging do
-            if IsControlJustReleased(0, 194) then -- Escape
+            -- Affichage des textes 3D pour les meubles
+            if cache.spawnedFurniture then
+                for i, v in pairs(cache.spawnedFurniture) do
+                    if v and v.coords then
+                        Draw3DTextSlow(i, v.coords.x, v.coords.y, v.coords.z)
+                    end
+                end
+            end
+
+            -- Vérifier si on appuie sur ECHAP
+            if IsControlJustReleased(0, 194) then -- 194 est le code pour ECHAP
                 isManaging = false
-                cache.busy = false
                 break
             end
             Wait(0)
         end
+
+        -- S'assurer que cache.busy est réinitialisé
+        cache.busy = false
+        CloseMenu()
+        
+        -- Petit délai pour s'assurer que tout est bien nettoyé
+        Wait(100)
+        
+        -- Rafraîchir les zones d'interaction si nécessaire
+        if cache.inInstance then
+            LoadFurniture()
+        end
     end)
 
-    while isManaging do
-        for i, v in pairs(cache.spawnedFurniture or {}) do
-            Draw3DTextSlow(i, v.coords.x, v.coords.y, v.coords.z)
+    -- Gestionnaire de timeout
+    CreateThread(function()
+        Wait(300000) -- 5 minutes de timeout
+        if isManaging then
+            isManaging = false
+            cache.busy = false
+            CloseMenu()
         end
-        Wait(0)
-    end
-
-    -- S'assurer que cache.busy est remis à false
-    SetTimeout(100, function()
-        cache.busy = false
     end)
 end
 
